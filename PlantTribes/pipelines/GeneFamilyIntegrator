@@ -1,0 +1,138 @@
+#!/usr/bin/env perl
+# Author: Eric Wafula
+# Email: ekw10@psu.edu
+# Institution: Penn State University, Biology Dept, Claude dePamphilis Lab
+# Date: 03-30-2017
+
+use strict;
+use warnings;
+use File::Spec;
+use File::Basename;
+use Getopt::Long qw(:config no_ignore_case);
+use FindBin;
+
+my $home =  "$FindBin::Bin/..";
+
+my $usage = <<__EOUSAGE__;
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+#
+#                                  INTEGRATE SCAFFOLD AND CLASSIFIED GENE FAMILIES 
+#
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+#  Required Options:
+#
+#  --orthogroup_fasta <string>     : Directory containing gene family classification orthogroups fasta files
+#
+#  --scaffold <string>             : Orthogroups or gene families proteins scaffold.  This can either be an absolute
+#                                    path to the directory containing the scaffolds (e.g., /home/scaffolds/22Gv1.1)
+#                                    or just the scaffold (e.g., 22Gv1.1).  If the latter, ~home/data is prepended to
+#                                    the scaffold to create the absolute path.
+#                                    If Monocots clusters (version 1.0): 12Gv1.0
+#                                    If Angiosperms clusters (version 1.0): 22Gv1.0
+#                                    If Angiosperms clusters (version 1.1): 22Gv1.1
+#                                    If Green plants clusters (version 1.0): 30Gv1.0
+#                                    If Other non PlantTribes clusters: XGvY.Z, where "X" is the number species in the scaffold,
+#                                    and "Y.Z" version number such as 12Gv1.0. Please look at one of the PlantTribes scaffold
+#                                    data on how data files and directories are named, formated, and organized.
+#
+#  --method <string>               : Protein clustering method for the classification scaffold
+#                                    If GFam: gfam
+#                                    If OrthoFinder: orthofinder
+#                                    If OrthoMCL: orthomcl
+#                                    If Other non PlantTribes method: methodname, where "methodname" a nonempty string of
+#                                    word characters (alphanumeric or "_"). No embedded special charaters or white spaces.
+#
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+#  Example Usage:
+#
+#  GeneFamilyIntegrator --orthogroup_fasta geneFamilyClassification_dir/orthogroups_fasta --scaffold 22Gv1.1  --method orthomcl
+#
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+ 
+__EOUSAGE__
+    ; 
+
+# Declare and initialize variables;
+my $orthogroup_fasta;
+my $scaffold;
+my $method;
+
+my $options = GetOptions (  'orthogroup_fasta=s' => \$orthogroup_fasta,
+              'scaffold=s' => \$scaffold,
+              'method=s' => \$method,
+              );
+
+my $scaffold_dir;
+if (File::Spec->file_name_is_absolute($scaffold)) {
+	$scaffold_dir = $scaffold;
+	$scaffold = basename($scaffold);
+} else {
+	$scaffold_dir = "$home/data/$scaffold";
+}
+
+# validate options
+unless ( $options ) { die $usage; }
+unless ( $orthogroup_fasta and $scaffold and $method ) { print "\nOne or more required options not set\n"; die $usage; }
+if ( $scaffold !~ /^\d+Gv\d+\.\d+$/) { print "\nOrthogroups or gene families proteins scaffold name $scaffold is not in the required format";
+	print " i.e. XGvY.Z, where X is number species in the scaffold, and Y.Z version number such as 12Gv1.0.\n"; die $usage; }
+if ( $method !~ /^\w+$/) { print "\nProtein clustering method name $method is not in the required format. The name should be a nonempty string";
+	print " of word characters (alphanumeric or _). No embedded special charaters or white spaces.\n"; die $usage; }
+my $input_files = 0;
+opendir (DIR, "$orthogroup_fasta") or die "can't open $orthogroup_fasta directory\n";
+while ( my $filename = readdir(DIR) ) { 
+	if (($filename =~ /^\d+\.faa$/) or ($filename =~ /^\d+\.fna$/) or ($filename =~ /^\d+\.fasta$/) or ($filename =~ /^\./)) { next; }
+	else { 
+		print "\nOrthogroup $filename fasta file in $orthogroup_fasta input directory is not properly named\n";
+		print "Please use the output produced by either the GeneFamilyClassifier or the AssemblyPostProcessor (targeted gene assembly)\n";
+		exit(1);
+	}
+}
+closedir DIR;
+
+print "\n";
+print localtime()." - Starting integrating scaffold and classified gene families\n";
+print "\n\n";
+
+# create output directory
+my $dirname ="./integratedGeneFamilies_dir";
+if (-d $dirname) { die "Exiting...!\nGene families integration output directory ($dirname) already exists!\n\n"; }
+make_directory($dirname);
+
+get_orthogroup_fasta ( $orthogroup_fasta, $scaffold, $method, $dirname, $scaffold_dir );
+
+print localtime()." - Completed integrating scaffold and classified gene families\n\n";
+
+exit(0);
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  sub-routines # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+sub make_directory {
+	my ( $new_dir ) = @_;
+	if (!-d $new_dir) {
+		mkdir($new_dir, 0755);
+	}
+}
+
+sub get_orthogroup_fasta {
+	my ( $orthogroup_fasta, $scaffold, $method, $dirname, $scaffold_dir ) = @_;
+	print localtime()." - Creating orthogroup fasta\n\n";
+	my (%pep, %cds);
+	opendir (DIR, "$orthogroup_fasta") or die "can't open $orthogroup_fasta file\n";
+	while ( my $filename = readdir(DIR) ) {
+		if ($filename =~ /^(\d+)\.faa$/) { $pep{$1} = $1; }
+		if ($filename =~ /^(\d+)\.fna$/) { $cds{$1} = $1; }
+	}
+	closedir DIR;
+	if (keys(%cds) and (keys(%pep) != keys(%cds))) { 
+		die "Exiting...!\nOrthogroup classification protein and CDS fasta files not equivalent in $orthogroup_fasta directory\n\n";
+	}	
+	foreach my $ortho_id (keys %pep) { 
+		my $merging_call = system "cat $scaffold_dir/fasta/$method/$ortho_id.faa $orthogroup_fasta/$ortho_id.faa > $dirname/$ortho_id.faa";
+		if ($merging_call != 0) { print "\n-- ".localtime()." - Merging orthogroup $ortho_id failed\n\n"; exit(1); }
+		if (keys(%cds) and $cds{$ortho_id}) {
+			my $merging_call = system "cat $scaffold_dir/fasta/$method/$ortho_id.fna $orthogroup_fasta/$ortho_id.fna > $dirname/$ortho_id.fna";
+			if ($merging_call != 0) { print "\n-- ".localtime()." - Merging orthogroup $ortho_id failed\n\n"; exit(1); }
+		}
+	} 	
+}

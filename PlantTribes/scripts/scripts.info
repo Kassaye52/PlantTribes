@@ -1,0 +1,4 @@
+# All PlantTribes helper scripts should be placed in this loacation - "PlanTribes/scripts"
+
+# Available helper scripts:
+ks_distribution.R
